@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <title>Hunt the Wumpus</title>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+      const { useState, useEffect, useMemo } = React;
+
+      const GameBoard = () => {
+        // Constants
+        const TILE_SIZE = 40;
+        const PATH_WIDTH = 8;
+        const RADIUS = TILE_SIZE/2 - 1;
+        const INNER_RADIUS = RADIUS + PATH_WIDTH;
+        const GRID_WIDTH = 8;
+        const GRID_HEIGHT = 6;
+
+        // Tile type definitions
+        const TILE_TYPES = {
+          CIRCLE: 0,
+          CURVE_1: 1,
+          CURVE_2: 2,
+          PIT: 3,
+          POINGLY: 4,
+          BAT: 5
+        };
+// Generate random tile map
+        const tileMap = useMemo(() => {
+  const map = new Array(GRID_HEIGHT).fill(null)
+    .map(() => new Array(GRID_WIDTH).fill(TILE_TYPES.CIRCLE));
+  
+  // Place curved tiles randomly (about 25% of tiles)
+  const totalTiles = GRID_WIDTH * GRID_HEIGHT;
+  const numCurved = Math.floor(totalTiles * 0.25);
+  let placed = 0;
+  
+  while (placed < numCurved) {
+    const x = Math.floor(Math.random() * GRID_WIDTH);
+    const y = Math.floor(Math.random() * GRID_HEIGHT);
+    if (map[y][x] === TILE_TYPES.CIRCLE) {
+      map[y][x] = Math.random() < 0.5 ? TILE_TYPES.CURVE_1 : TILE_TYPES.CURVE_2;
+      placed++;
+    }
+  }
+
+ 
+  
+
+
+        // Warning tiles function
+        // Modify the findWarningRooms function to handle both pit and wumpus warnings
+const findWarningRooms = (tileMap) => {
+  const pitWarningRooms = new Set();
+  const wumpusWarningRooms = new Set();
+  const wumpusSecondaryWarnings = new Set();
+  
+  // Helper function to trace path to first circle/pit
+  const tracePathToCircle = (startX, startY, dx, dy, isPitWarning = false) => {
+  let currentX = startX;
+  let currentY = startY;
+  let comingFrom = '';
+  
+  while (true) {
+    currentX = (currentX + dx + GRID_WIDTH) % GRID_WIDTH;
+    currentY = (currentY + dy + GRID_HEIGHT) % GRID_HEIGHT;
+    
+    if (dx === 1) comingFrom = 'left';
+    if (dx === -1) comingFrom = 'right';
+    if (dy === 1) comingFrom = 'top';
+    if (dy === -1) comingFrom = 'bottom';
+    
+    const currentTile = tileMap[currentY][currentX];
+    
+    // For pit warnings, Poingly rooms are valid targets
+    if (isPitWarning && 
+        (currentTile === TILE_TYPES.CIRCLE || 
+         currentTile === TILE_TYPES.PIT || 
+         currentTile === TILE_TYPES.POINGLY ||
+         currentTile === TILE_TYPES.BAT)) {
+      return { x: currentX, y: currentY };
+    }
+    
+    // For Wumpus warnings, only circles and pits
+    if (!isPitWarning && 
+        (currentTile === TILE_TYPES.CIRCLE || 
+         currentTile === TILE_TYPES.PIT ||
+         currentTile === TILE_TYPES.BAT)) {
+      return { x: currentX, y: currentY };
+    }
+    
+    // Handle curves
+    if (currentTile === TILE_TYPES.CURVE_1) {
+      if (comingFrom === 'bottom') { dx = -1; dy = 0; }
+      else if (comingFrom === 'left') { dx = 0; dy = 1; }
+      else if (comingFrom === 'top') { dx = 1; dy = 0; }
+      else if (comingFrom === 'right') { dx = 0; dy = -1; }
+    }
+    else if (currentTile === TILE_TYPES.CURVE_2) {
+      if (comingFrom === 'bottom') { dx = 1; dy = 0; }
+      else if (comingFrom === 'right') { dx = 0; dy = 1; }
+      else if (comingFrom === 'top') { dx = -1; dy = 0; }
+      else if (comingFrom === 'left') { dx = 0; dy = -1; }
+    }
+  }
+};
+  
+  // Find all warnings
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      const tile = tileMap[y][x];
+      
+      if (tile === TILE_TYPES.PIT) {
+  // Check all four directions from the pit, with isPitWarning = true
+  [[-1,0], [1,0], [0,-1], [0,1]].forEach(([dx, dy]) => {
+    const warning = tracePathToCircle(x, y, dx, dy, true);  // Added true here
+    if (warning) {
+      pitWarningRooms.add(`${warning.x},${warning.y}`);
+    }
+  });
+}
+      else if (tile === TILE_TYPES.POINGLY) {
+        // First find primary warnings (one move away)
+        [[-1,0], [1,0], [0,-1], [0,1]].forEach(([dx, dy]) => {
+          const warning = tracePathToCircle(x, y, dx, dy);
+          if (warning) {
+            const key = `${warning.x},${warning.y}`;
+            wumpusWarningRooms.add(key);
+            
+            // From each primary warning, trace one more step
+            [[-1,0], [1,0], [0,-1], [0,1]].forEach(([sdx, sdy]) => {
+              const secondaryWarning = tracePathToCircle(warning.x, warning.y, sdx, sdy);
+              if (secondaryWarning) {
+                const secondaryKey = `${secondaryWarning.x},${secondaryWarning.y}`;
+                // Don't add if it's the Wumpus tile or a primary warning
+                if (secondaryKey !== `${x},${y}` && !wumpusWarningRooms.has(secondaryKey)) {
+                  wumpusSecondaryWarnings.add(secondaryKey);
+                }
+              }
+            });
+          }
+        });
+      }
+    }
+  }
+  
+  return {
+    pitWarnings: pitWarningRooms,
+    wumpusWarnings: wumpusWarningRooms,
+    wumpusSecondaryWarnings: wumpusSecondaryWarnings
+  };
+};
+        
+  
+  // Place pit rooms randomly (2 rooms)
+  for (let i = 0; i < 2; i++) {
+    let x, y;
+    do {
+      x = Math.floor(Math.random() * GRID_WIDTH);
+      y = Math.floor(Math.random() * GRID_HEIGHT);
+    } while (map[y][x] !== TILE_TYPES.CIRCLE);
+    map[y][x] = TILE_TYPES.PIT;
+  }
+
+  // Place bat rooms randomly (2 rooms)
+  for (let i = 0; i < 2; i++) {
+    let x, y;
+    do {
+      x = Math.floor(Math.random() * GRID_WIDTH);
+      y = Math.floor(Math.random() * GRID_HEIGHT);
+    } while (map[y][x] !== TILE_TYPES.CIRCLE);
+    map[y][x] = TILE_TYPES.BAT;
+  }
+    
+  // Place wumpus randomly (1 room)
+  let wx, wy;
+  do {
+    wx = Math.floor(Math.random() * GRID_WIDTH);
+    wy = Math.floor(Math.random() * GRID_HEIGHT);
+  } while (map[wy][wx] !== TILE_TYPES.CIRCLE);
+  map[wy][wx] = TILE_TYPES.POINGLY;
+  
+  // Find a random empty circle for player start
+  let sx, sy;
+do {
+  sx = Math.floor(Math.random() * GRID_WIDTH);
+  sy = Math.floor(Math.random() * GRID_HEIGHT);
+} while (
+  map[sy][sx] !== TILE_TYPES.CIRCLE || // Must be a circle room
+  // Check if the position is in any warning room
+  findWarningRooms(map).pitWarnings.has(`${sx},${sy}`) ||
+  findWarningRooms(map).wumpusWarnings.has(`${sx},${sy}`) ||
+  findWarningRooms(map).wumpusSecondaryWarnings.has(`${sx},${sy}`)
+);
+  
+  const warningRooms = findWarningRooms(map);
+  return { 
+    tileMap: map, 
+    warningRooms,
+    startPos: { x: sx, y: sy }
+  };
+}, []);
+          
+// State declarations
+const [characterPos, setCharacterPos] = useState(tileMap.startPos);
+const [entryDirection, setEntryDirection] = useState(null);
+const [gameState, setGameState] = useState('playing');
+const [flashCount, setFlashCount] = useState(0);
+const [isArrowMode, setIsArrowMode] = useState(false);
+const [checkedBatRoom, setCheckedBatRoom] = useState(false);
+const [batAnimation, setBatAnimation] = useState(null);  // Add this line
+const [animatingBatRoom, setAnimatingBatRoom] = useState(null);
+const [isBeingCarried, setIsBeingCarried] = useState(false);
+
+       // Direction mappings
+        const keyToDirection = {
+          'ArrowUp': 'top',
+          'ArrowRight': 'right',
+          'ArrowDown': 'bottom',
+          'ArrowLeft': 'left'
+        };
+
+        const oppositeDirection = {
+          'top': 'bottom',
+          'right': 'left',
+          'bottom': 'top',
+          'left': 'right'
+        };
+
+        // Helper functions
+        const getValidMoves = (pos, tileType, entry) => {
+          if (tileType === TILE_TYPES.CIRCLE || tileType === TILE_TYPES.BAT) {
+            return ['top', 'right', 'bottom', 'left'];
+          }
+
+          if (tileType === TILE_TYPES.CURVE_1) {
+            switch(entry) {
+              case 'top': return ['right', 'top'];
+              case 'right': return ['top', 'right'];
+              case 'bottom': return ['left', 'bottom'];
+              case 'left': return ['bottom', 'left'];
+              default: return ['top', 'right', 'bottom', 'left'];
+            }
+          }
+
+          if (tileType === TILE_TYPES.CURVE_2) {
+            switch(entry) {
+              case 'top': return ['left', 'top'];
+              case 'right': return ['bottom', 'right'];
+              case 'bottom': return ['right', 'bottom'];
+              case 'left': return ['top', 'left'];
+              default: return ['top', 'right', 'bottom', 'left'];
+            }
+          }
+
+          return [];
+        };
+
+        // Replace the existing traceArrowPath with this version
+const traceArrowPath = (startX, startY, direction) => {
+  let dx = 0;
+  let dy = 0;
+  let comingFrom = '';
+    
+      // Set initial direction
+  switch(direction) {
+    case 'top': dy = -1; break;
+    case 'right': dx = 1; break;
+    case 'bottom': dy = 1; break;
+    case 'left': dx = -1; break;
+  }
+  
+  let currentX = startX;
+  let currentY = startY;
+  
+  while (true) {
+    // Move in the specified direction
+    currentX = (currentX + dx + GRID_WIDTH) % GRID_WIDTH;
+    currentY = (currentY + dy + GRID_HEIGHT) % GRID_HEIGHT;
+    
+    // Set which direction we came from
+    if (dx === 1) comingFrom = 'left';
+    if (dx === -1) comingFrom = 'right';
+    if (dy === 1) comingFrom = 'top';
+    if (dy === -1) comingFrom = 'bottom';
+    
+    const currentTile = tileMap.tileMap[currentY][currentX];
+    
+    // If we hit a circle/pit/poingly tile, this is our target
+    if (currentTile === TILE_TYPES.CIRCLE || 
+        currentTile === TILE_TYPES.PIT || 
+        currentTile === TILE_TYPES.POINGLY) {
+      return { x: currentX, y: currentY };
+    }
+    
+    // If we hit a curve, adjust our direction based on the curve type and where we came from
+    if (currentTile === TILE_TYPES.CURVE_1) {
+      if (comingFrom === 'bottom') { dx = -1; dy = 0; }
+      else if (comingFrom === 'left') { dx = 0; dy = 1; }
+      else if (comingFrom === 'top') { dx = 1; dy = 0; }
+      else if (comingFrom === 'right') { dx = 0; dy = -1; }
+    }
+    else if (currentTile === TILE_TYPES.CURVE_2) {
+      if (comingFrom === 'bottom') { dx = 1; dy = 0; }
+      else if (comingFrom === 'right') { dx = 0; dy = 1; }
+      else if (comingFrom === 'top') { dx = -1; dy = 0; }
+      else if (comingFrom === 'left') { dx = 0; dy = -1; }
+    }
+  }
+};
+
+          const findRandomEmptyCircle = (map) => {
+  let x, y;
+  do {
+    x = Math.floor(Math.random() * GRID_WIDTH);
+    y = Math.floor(Math.random() * GRID_HEIGHT);
+  } while (map[y][x] !== TILE_TYPES.CIRCLE);
+  return { x, y };
+};
+
+
+
+// Add bat room component
+const BatRoom = ({ x, y, isAnimating }) => {
+  const startX = x * TILE_SIZE;
+  const startY = y * TILE_SIZE;
+  const center = TILE_SIZE/2;
+  const BAT_SIZE = TILE_SIZE/2.5;
+  const BAT_Y_OFFSET = -TILE_SIZE/4;
+  const LIFT_DISTANCE = TILE_SIZE/3; // Reduced from TILE_SIZE/2
+  
+  return (
+    <g transform={`translate(${startX}, ${startY})`}>
+      {/* Base circle room */}
+      <Circle x={0} y={0} />
+      
+      {/* Animated bat design */}
+      <g transform={`translate(${center - BAT_SIZE/2}, ${center + BAT_Y_OFFSET})`}>
+        {isAnimating ? (
+          // Animated lifting bat
+          <g>
+            <animateTransform
+              attributeName="transform"
+              type="translate"
+              from={`0 0`}
+              to={`0 ${-LIFT_DISTANCE}`}
+              dur="0.5s"
+              fill="freeze"
+            />
+            {/* Left wing */}
+            <path
+              d={`M 0,0 
+                  C ${BAT_SIZE/4},${-BAT_SIZE/2} ${BAT_SIZE/2},${-BAT_SIZE/4} ${BAT_SIZE/2},${BAT_SIZE/4}
+                  C ${BAT_SIZE/2},${BAT_SIZE/2} ${BAT_SIZE/4},${BAT_SIZE/4} 0,0`}
+              fill="#800000"
+            />
+            {/* Right wing */}
+            <path
+              d={`M ${BAT_SIZE},0 
+                  C ${BAT_SIZE*3/4},${-BAT_SIZE/2} ${BAT_SIZE/2},${-BAT_SIZE/4} ${BAT_SIZE/2},${BAT_SIZE/4}
+                  C ${BAT_SIZE/2},${BAT_SIZE/2} ${BAT_SIZE*3/4},${BAT_SIZE/4} ${BAT_SIZE},0`}
+              fill="#800000"
+            />
+            {/* Body */}
+            <ellipse
+              cx={BAT_SIZE/2}
+              cy={BAT_SIZE/4}
+              rx={BAT_SIZE/4}
+              ry={BAT_SIZE/3}
+              fill="#800000"
+            />
+            {/* Eyes */}
+            <circle cx={BAT_SIZE*3/8} cy={BAT_SIZE/8} r={BAT_SIZE/12} fill="#ff0000" />
+            <circle cx={BAT_SIZE*5/8} cy={BAT_SIZE/8} r={BAT_SIZE/12} fill="#ff0000" />
+          </g>
+        ) : (
+          // Normal bat
+          <g>
+            {/* Left wing */}
+            <path
+              d={`M 0,0 
+                  C ${BAT_SIZE/4},${-BAT_SIZE/2} ${BAT_SIZE/2},${-BAT_SIZE/4} ${BAT_SIZE/2},${BAT_SIZE/4}
+                  C ${BAT_SIZE/2},${BAT_SIZE/2} ${BAT_SIZE/4},${BAT_SIZE/4} 0,0`}
+              fill="#666666"
+            />
+            {/* Right wing */}
+            <path
+              d={`M ${BAT_SIZE},0 
+                  C ${BAT_SIZE*3/4},${-BAT_SIZE/2} ${BAT_SIZE/2},${-BAT_SIZE/4} ${BAT_SIZE/2},${BAT_SIZE/4}
+                  C ${BAT_SIZE/2},${BAT_SIZE/2} ${BAT_SIZE*3/4},${BAT_SIZE/4} ${BAT_SIZE},0`}
+              fill="#666666"
+            />
+            {/* Body */}
+            <ellipse
+              cx={BAT_SIZE/2}
+              cy={BAT_SIZE/4}
+              rx={BAT_SIZE/4}
+              ry={BAT_SIZE/3}
+              fill="#666666"
+            />
+            {/* Eyes */}
+            <circle cx={BAT_SIZE*3/8} cy={BAT_SIZE/8} r={BAT_SIZE/12} fill="#ffffff" />
+            <circle cx={BAT_SIZE*5/8} cy={BAT_SIZE/8} r={BAT_SIZE/12} fill="#ffffff" />
+          </g>
+        )}
+      </g>
+    </g>
+  );
+};
+
+        // Game components (Circle, CurvePattern1, CurvePattern2, etc.)
+        const Circle = ({ x, y }) => {
+    const startX = x * TILE_SIZE;
+    const startY = y * TILE_SIZE;
+    const center = TILE_SIZE/2;
+    
+    return (
+      <g transform={`translate(${startX}, ${startY})`}>
+        {/* Top-right arc */}
+        <path
+          d={`M ${center + PATH_WIDTH/2},0 
+              A ${RADIUS} ${RADIUS} 0 0 1 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        {/* Bottom-right arc */}
+        <path
+          d={`M ${TILE_SIZE},${center + PATH_WIDTH/2}
+              A ${RADIUS} ${RADIUS} 0 0 1 ${center + PATH_WIDTH/2},${TILE_SIZE}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        {/* Bottom-left arc */}
+        <path
+          d={`M ${center - PATH_WIDTH/2},${TILE_SIZE}
+              A ${RADIUS} ${RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        {/* Top-left arc */}
+        <path
+          d={`M 0,${center - PATH_WIDTH/2}
+              A ${RADIUS} ${RADIUS} 0 0 1 ${center - PATH_WIDTH/2},0`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+      </g>
+    );
+  };
+
+  const CurvePattern1 = ({ x, y }) => {
+    const startX = x * TILE_SIZE;
+    const startY = y * TILE_SIZE;
+    const center = TILE_SIZE/2;
+    
+    return (
+      <g transform={`translate(${startX}, ${startY})`}>
+        {/* Top-to-right curve */}
+        <path
+          d={`M ${center - PATH_WIDTH/2},0 
+              A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 0 ${TILE_SIZE},${center + PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        <path
+          d={`M ${center + PATH_WIDTH/2},0 
+              A ${RADIUS} ${RADIUS} 0 0 0 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+
+        {/* 180° rotated curve */}
+        <g transform={`rotate(180, ${center}, ${center})`}>
+          <path
+            d={`M ${center - PATH_WIDTH/2},0 
+                A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 0 ${TILE_SIZE},${center + PATH_WIDTH/2}`}
+            stroke="#8080ff"
+            strokeWidth="2"
+            fill="none"
+          />
+          <path
+            d={`M ${center + PATH_WIDTH/2},0 
+                A ${RADIUS} ${RADIUS} 0 0 0 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+            stroke="#8080ff"
+            strokeWidth="2"
+            fill="none"
+          />
+        </g>
+      </g>
+    );
+  };
+
+  const CurvePattern2 = ({ x, y }) => {
+    const startX = x * TILE_SIZE;
+    const startY = y * TILE_SIZE;
+    const center = TILE_SIZE/2;
+    
+    return (
+      <g transform={`translate(${startX}, ${startY})`}>
+        {/* Top-to-left curve */}
+        <path
+          d={`M ${center + PATH_WIDTH/2},0 
+              A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        <path
+          d={`M ${center - PATH_WIDTH/2},0 
+              A ${RADIUS} ${RADIUS} 0 0 1 0,${center - PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+
+        {/* 180° rotated curve */}
+        <g transform={`rotate(180, ${center}, ${center})`}>
+          <path
+            d={`M ${center + PATH_WIDTH/2},0 
+                A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}`}
+            stroke="#8080ff"
+            strokeWidth="2"
+            fill="none"
+          />
+          <path
+            d={`M ${center - PATH_WIDTH/2},0 
+                A ${RADIUS} ${RADIUS} 0 0 1 0,${center - PATH_WIDTH/2}`}
+            stroke="#8080ff"
+            strokeWidth="2"
+            fill="none"
+          />
+        </g>
+      </g>
+    );
+  };
+const PartialCurvePattern1 = ({ x, y, showTopRight, showBottomLeft }) => {
+  const startX = x * TILE_SIZE;
+  const startY = y * TILE_SIZE;
+  const center = TILE_SIZE/2;
+  
+  return (
+    <g transform={`translate(${startX}, ${startY})`}>
+      {/* Top-right part */}
+      {showTopRight && (
+        <path
+          d={`M ${center - PATH_WIDTH/2},0 
+              A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 0 ${TILE_SIZE},${center + PATH_WIDTH/2}
+              M ${center + PATH_WIDTH/2},0 
+              A ${RADIUS} ${RADIUS} 0 0 0 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+      )}
+
+      {/* Bottom-left part */}
+      {showBottomLeft && (
+        <g transform={`rotate(180, ${center}, ${center})`}>
+          <path
+            d={`M ${center - PATH_WIDTH/2},0 
+                A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 0 ${TILE_SIZE},${center + PATH_WIDTH/2}
+                M ${center + PATH_WIDTH/2},0 
+                A ${RADIUS} ${RADIUS} 0 0 0 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+            stroke="#8080ff"
+            strokeWidth="2"
+            fill="none"
+          />
+        </g>
+      )}
+    </g>
+  );
+};
+
+const PartialCurvePattern2 = ({ x, y, showTopLeft, showBottomRight }) => {
+  const startX = x * TILE_SIZE;
+  const startY = y * TILE_SIZE;
+  const center = TILE_SIZE/2;
+  
+  return (
+    <g transform={`translate(${startX}, ${startY})`}>
+      {/* Top-left part */}
+      {showTopLeft && (
+        <path
+          d={`M ${center + PATH_WIDTH/2},0 
+              A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}
+              M ${center - PATH_WIDTH/2},0 
+              A ${RADIUS} ${RADIUS} 0 0 1 0,${center - PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+      )}
+
+      {/* Bottom-right part */}
+      {showBottomRight && (
+        <g transform={`rotate(180, ${center}, ${center})`}>
+          <path
+            d={`M ${center + PATH_WIDTH/2},0 
+                A ${INNER_RADIUS} ${INNER_RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}
+                M ${center - PATH_WIDTH/2},0 
+                A ${RADIUS} ${RADIUS} 0 0 1 0,${center - PATH_WIDTH/2}`}
+            stroke="#8080ff"
+            strokeWidth="2"
+            fill="none"
+          />
+        </g>
+      )}
+    </g>
+  );
+};
+          
+const PitRoom = ({ x, y }) => {
+    const startX = x * TILE_SIZE;
+    const startY = y * TILE_SIZE;
+    const center = TILE_SIZE/2;
+    const PIT_RADIUS = TILE_SIZE/3;  // Scaled to tile size
+    
+    return (
+      <g transform={`translate(${startX}, ${startY})`}>
+        {/* Room circle with openings - same as Circle component */}
+        {/* Top-right arc */}
+        <path
+          d={`M ${center + PATH_WIDTH/2},0 
+              A ${RADIUS} ${RADIUS} 0 0 1 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        {/* Bottom-right arc */}
+        <path
+          d={`M ${TILE_SIZE},${center + PATH_WIDTH/2}
+              A ${RADIUS} ${RADIUS} 0 0 1 ${center + PATH_WIDTH/2},${TILE_SIZE}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        {/* Bottom-left arc */}
+        <path
+          d={`M ${center - PATH_WIDTH/2},${TILE_SIZE}
+              A ${RADIUS} ${RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+        {/* Top-left arc */}
+        <path
+          d={`M 0,${center - PATH_WIDTH/2}
+              A ${RADIUS} ${RADIUS} 0 0 1 ${center - PATH_WIDTH/2},0`}
+          stroke="#8080ff"
+          strokeWidth="2"
+          fill="none"
+        />
+
+        {/* Pit */}
+        <defs>
+          <radialGradient id={`pitGradient-${x}-${y}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#004400" />
+            <stop offset="70%" stopColor="#00ff00" />
+            <stop offset="100%" stopColor="#00aa00" />
+          </radialGradient>
+          <radialGradient id={`pitHighlight-${x}-${y}`} cx="40%" cy="40%" r="60%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </radialGradient>
+        </defs>
+        <circle 
+          cx={center} 
+          cy={center} 
+          r={PIT_RADIUS} 
+          fill={`url(#pitGradient-${x}-${y})`}
+        />
+        <circle 
+          cx={center} 
+          cy={center} 
+          r={PIT_RADIUS} 
+          fill={`url(#pitHighlight-${x}-${y})`}
+        />
+        <circle 
+          cx={center} 
+          cy={center} 
+          r={PIT_RADIUS + 3} 
+          stroke="#00ff00" 
+          strokeWidth="1" 
+          fill="none" 
+          opacity="0.5"
+        />
+      </g>
+    );
+  };
+const PoinglyRoom = ({ x, y }) => {
+  const startX = x * TILE_SIZE;
+  const startY = y * TILE_SIZE;
+  const center = TILE_SIZE/2;
+  const MONSTER_SIZE = TILE_SIZE/3;
+
+  return (
+    <g transform={`translate(${startX}, ${startY})`}>
+      {/* Room circle with openings */}
+      <path
+        d={`M ${center + PATH_WIDTH/2},0 
+            A ${RADIUS} ${RADIUS} 0 0 1 ${TILE_SIZE},${center - PATH_WIDTH/2}`}
+        stroke="#8080ff"
+        strokeWidth="2"
+        fill="none"
+      />
+      <path
+        d={`M ${TILE_SIZE},${center + PATH_WIDTH/2}
+            A ${RADIUS} ${RADIUS} 0 0 1 ${center + PATH_WIDTH/2},${TILE_SIZE}`}
+        stroke="#8080ff"
+        strokeWidth="2"
+        fill="none"
+      />
+      <path
+        d={`M ${center - PATH_WIDTH/2},${TILE_SIZE}
+            A ${RADIUS} ${RADIUS} 0 0 1 0,${center + PATH_WIDTH/2}`}
+        stroke="#8080ff"
+        strokeWidth="2"
+        fill="none"
+      />
+      <path
+        d={`M 0,${center - PATH_WIDTH/2}
+            A ${RADIUS} ${RADIUS} 0 0 1 ${center - PATH_WIDTH/2},0`}
+        stroke="#8080ff"
+        strokeWidth="2"
+        fill="none"
+      />
+
+      {/* Poingly monster */}
+      <g transform={`translate(${center}, ${center})`}>
+        {/* Body */}
+        <circle
+          r={MONSTER_SIZE}
+          fill="#ff0000"
+        />
+        
+        {/* Eyes */}
+        <circle
+          cx={-MONSTER_SIZE/3}
+          cy={-MONSTER_SIZE/4}
+          r={MONSTER_SIZE/6}
+          fill="white"
+        />
+        <circle
+          cx={MONSTER_SIZE/3}
+          cy={-MONSTER_SIZE/4}
+          r={MONSTER_SIZE/6}
+          fill="white"
+        />
+        <circle
+          cx={-MONSTER_SIZE/3}
+          cy={-MONSTER_SIZE/4}
+          r={MONSTER_SIZE/12}
+          fill="black"
+        />
+        <circle
+          cx={MONSTER_SIZE/3}
+          cy={-MONSTER_SIZE/4}
+          r={MONSTER_SIZE/12}
+          fill="black"
+        />
+
+        {/* Teeth */}
+        <path
+          d={`M ${-MONSTER_SIZE/2} ${MONSTER_SIZE/4} 
+              L ${-MONSTER_SIZE/4} ${MONSTER_SIZE/2} 
+              L 0 ${MONSTER_SIZE/4} 
+              L ${MONSTER_SIZE/4} ${MONSTER_SIZE/2}
+              L ${MONSTER_SIZE/2} ${MONSTER_SIZE/4}`}
+          stroke="white"
+          strokeWidth="2"
+          fill="none"
+        />
+      </g>
+    </g>
+  );
+};
+    const BreezeWarning = ({ x, y }) => {
+    const startX = x * TILE_SIZE;
+    const startY = y * TILE_SIZE;
+    
+    // Create varied bubble configurations
+    const bubbles = [
+        { size: 4, speed: "2.8s", delay: "0s", offset: -12 },
+        { size: 2, speed: "3.2s", delay: "0.4s", offset: -8 },
+        { size: 3, speed: "2.5s", delay: "1.2s", offset: -4 },
+        { size: 5, speed: "3.5s", delay: "0.8s", offset: 0 },
+        { size: 2, speed: "2.2s", delay: "1.6s", offset: 4 },
+        { size: 4, speed: "3.0s", delay: "2.0s", offset: 8 },
+        { size: 3, speed: "2.6s", delay: "1.0s", offset: 12 },
+        { size: 2, speed: "2.4s", delay: "0.2s", offset: -6 },
+        { size: 4, speed: "3.3s", delay: "1.4s", offset: 6 },
+        { size: 3, speed: "2.7s", delay: "1.8s", offset: 10 }
+    ];
+    
+    return (
+        <g transform={`translate(${startX}, ${startY})`}>
+            <defs>
+                <clipPath id={`circleClip-${x}-${y}`}>
+                    <circle cx={TILE_SIZE/2} cy={TILE_SIZE/2} r={RADIUS - 2} />
+                </clipPath>
+            </defs>
+            <g clipPath={`url(#circleClip-${x}-${y})`}>
+                {bubbles.map((bubble, i) => (
+                    <circle key={i} r={bubble.size}>
+                        <animateMotion
+                            path={`M ${TILE_SIZE/2 + bubble.offset} ${TILE_SIZE} V ${0}`}
+                            dur={bubble.speed}
+                            begin={bubble.delay}
+                            repeatCount="indefinite"
+                        />
+                        <animate
+                            attributeName="opacity"
+                            values="0;0.8;0.8;0"
+                            dur={bubble.speed}
+                            begin={bubble.delay}
+                            repeatCount="indefinite"
+                        />
+                        <animate
+                            attributeName="r"
+                            values={`${bubble.size};${bubble.size * 1.5};${bubble.size}`}
+                            dur={bubble.speed}
+                            repeatCount="indefinite"
+                        />
+                        <animate
+                            attributeName="fill"
+                            values="#00ff00;#00aa00;#00ff00"
+                            dur={bubble.speed}
+                            repeatCount="indefinite"
+                        />
+                    </circle>
+                ))}
+            </g>
+        </g>
+    );
+};
+const WumpusWarning = ({ x, y }) => {
+  const startX = x * TILE_SIZE;
+  const startY = y * TILE_SIZE;
+  const center = TILE_SIZE/2;
+  const WARNING_SIZE = TILE_SIZE/4;
+  
+  return (
+    <g transform={`translate(${startX}, ${startY})`}>
+      <circle 
+        cx={center} 
+        cy={center} 
+        r={WARNING_SIZE}>
+        <animate
+          attributeName="fill"
+          values="#ff0000;#990000;#ff0000"
+          dur="2s"
+          repeatCount="indefinite"
+        />
+        <animate
+          attributeName="r"
+          values={`${WARNING_SIZE};${WARNING_SIZE * 1.2};${WARNING_SIZE}`}
+          dur="2s"
+          repeatCount="indefinite"
+        />
+      </circle>
+    </g>
+  );
+};
+const FogTile = ({ x, y }) => {
+    const startX = x * TILE_SIZE;
+    const startY = y * TILE_SIZE;
+    
+    return (
+      <rect
+        x={startX}
+        y={startY}
+        width={TILE_SIZE}
+        height={TILE_SIZE}
+        fill="black"
+        stroke="#1a1a1a"
+        strokeWidth="0"
+      />
+    );
+  };
+const Character = ({ x, y, tileType, entryDirection, batAnimation, isArrowMode }) => {
+  const baseX = x * TILE_SIZE + TILE_SIZE/2;
+  const baseY = y * TILE_SIZE + TILE_SIZE/2;
+  const curveOffset = TILE_SIZE/6;
+  const LIFT_DISTANCE = TILE_SIZE/3;
+  const PERSON_SIZE = PATH_WIDTH * 1.5; // Base size for the person
+
+  // Helper function to draw person at given coordinates
+   const PersonShape = ({cx, cy, fill = isArrowMode ? "#00ffff" : "#ffff00"}) => (
+    <g transform={`translate(${cx}, ${cy})`}>
+      {/* Head */}
+      <circle 
+        cx="0" 
+        cy={-PERSON_SIZE/2} 
+        r={PERSON_SIZE/4} // Reduced from /3
+        fill={fill} 
+      />
+      {/* Body */}
+      <line 
+        x1="0" 
+        y1={-PERSON_SIZE/3} 
+        x2="0" 
+        y2={PERSON_SIZE/3} 
+        stroke={fill} 
+        strokeWidth={PERSON_SIZE/6} // Reduced from /4
+      />
+      {/* Arms */}
+      <line 
+        x1={-PERSON_SIZE/2} 
+        y1={-PERSON_SIZE/6} 
+        x2={PERSON_SIZE/2} 
+        y2={-PERSON_SIZE/6} 
+        stroke={fill} 
+        strokeWidth={PERSON_SIZE/6} // Reduced from /4
+      />
+      {/* Legs */}
+      <line 
+        x1="0" 
+        y1={PERSON_SIZE/3} 
+        x2={-PERSON_SIZE/2} 
+        y2={PERSON_SIZE} 
+        stroke={fill} 
+        strokeWidth={PERSON_SIZE/6} // Reduced from /4
+      />
+      <line 
+        x1="0" 
+        y1={PERSON_SIZE/3} 
+        x2={PERSON_SIZE/2} 
+        y2={PERSON_SIZE} 
+        stroke={fill} 
+        strokeWidth={PERSON_SIZE/6} // Reduced from /4
+      />
+    </g>
+  );
+
+  if (batAnimation === 'pickup') {
+    return (
+      <g>
+        <PersonShape cx={baseX} cy={baseY}>
+          <animate
+            attributeName="cy"
+            from={baseY}
+            to={baseY - LIFT_DISTANCE}
+            dur="0.5s"
+            fill="freeze"
+          />
+        </PersonShape>
+      </g>
+    );
+  }
+
+  // For Pattern 1 (top-right/bottom-left curves)
+  if (tileType === TILE_TYPES.CURVE_1) {
+    switch(entryDirection) {
+      case 'bottom':
+        return <PersonShape cx={baseX - curveOffset} cy={baseY + curveOffset} />;
+      case 'left':
+        return <PersonShape cx={baseX - curveOffset} cy={baseY + curveOffset} />;
+      case 'top':
+        return <PersonShape cx={baseX + curveOffset} cy={baseY - curveOffset} />;
+      case 'right':
+        return <PersonShape cx={baseX + curveOffset} cy={baseY - curveOffset} />;
+      default:
+        return <PersonShape cx={baseX} cy={baseY} />;
+    }
+  }
+
+  // For Pattern 2 (top-left/bottom-right curves)
+  if (tileType === TILE_TYPES.CURVE_2) {
+    switch(entryDirection) {
+      case 'bottom':
+        return <PersonShape cx={baseX + curveOffset} cy={baseY + curveOffset} />;
+      case 'right':
+        return <PersonShape cx={baseX + curveOffset} cy={baseY + curveOffset} />;
+      case 'top':
+        return <PersonShape cx={baseX - curveOffset} cy={baseY - curveOffset} />;
+      case 'left':
+        return <PersonShape cx={baseX - curveOffset} cy={baseY - curveOffset} />;
+      default:
+        return <PersonShape cx={baseX} cy={baseY} />;
+    }
+  }
+
+  return <PersonShape cx={baseX} cy={baseY} />;
+};
+const [visitedTiles, setVisitedTiles] = useState(() => {
+  const visited = new Array(GRID_HEIGHT).fill(null)
+    .map(() => new Array(GRID_WIDTH).fill(null)
+    .map(() => ({
+      visited: false,
+      topRight: false,    // for CURVE_1
+      bottomLeft: false,  // for CURVE_1
+      topLeft: false,     // for CURVE_2
+      bottomRight: false  // for CURVE_2
+    })));
+  // Mark starting position as visited
+  visited[tileMap.startPos.y][tileMap.startPos.x].visited = true;
+  return visited;
+});
+          
+const handleMovement = (direction, newPos) => {
+  if (isBeingCarried) return;
+
+  const newTileType = tileMap.tileMap[newPos.y][newPos.x];
+
+  // Mark new position as visited
+  const newVisited = visitedTiles.map(row => row.map(cell => ({...cell})));
+const tileType = tileMap.tileMap[newPos.y][newPos.x];
+
+if (tileType === TILE_TYPES.CURVE_1) {
+  switch(direction) {
+    case 'top':
+    case 'right':
+      newVisited[newPos.y][newPos.x].bottomLeft = true;
+      if (visitedTiles[newPos.y][newPos.x].topRight) {
+        newVisited[newPos.y][newPos.x].visited = true;
+      }
+      break;
+    case 'bottom':
+    case 'left':
+      newVisited[newPos.y][newPos.x].topRight = true;
+      if (visitedTiles[newPos.y][newPos.x].bottomLeft) {
+        newVisited[newPos.y][newPos.x].visited = true;
+      }
+      break;
+  }
+} else if (tileType === TILE_TYPES.CURVE_2) {
+  switch(direction) {
+    case 'top':
+    case 'left':
+      newVisited[newPos.y][newPos.x].bottomRight = true;
+      if (visitedTiles[newPos.y][newPos.x].topLeft) {
+        newVisited[newPos.y][newPos.x].visited = true;
+      }
+      break;
+    case 'bottom':
+    case 'right':
+      newVisited[newPos.y][newPos.x].topLeft = true;
+      if (visitedTiles[newPos.y][newPos.x].bottomRight) {
+        newVisited[newPos.y][newPos.x].visited = true;
+      }
+      break;
+  }
+} else {
+  newVisited[newPos.y][newPos.x].visited = true;
+}
+
+setVisitedTiles(newVisited);
+
+  if (newTileType === TILE_TYPES.BAT) {
+    if (!checkedBatRoom) {
+      setCheckedBatRoom(true);
+      const roll = Math.random();
+      if (roll < 0.3) {  // 30% chance of bats picking you up
+        setIsBeingCarried(true);
+        setAnimatingBatRoom({x: newPos.x, y: newPos.y});
+        setBatAnimation('pickup');
+        
+        setTimeout(() => {
+          const randomPos = findRandomEmptyCircle(tileMap.tileMap);
+          // Keep track of the bat's original position
+          const batX = newPos.x;
+          const batY = newPos.y;
+          
+          // Update the map
+          const newMap = [...tileMap.tileMap.map(row => [...row])];
+          newMap[batY][batX] = TILE_TYPES.CIRCLE;
+          tileMap.tileMap = newMap;
+          
+          // Update visited tiles - keep bat room visible and add new landing spot
+          const finalVisited = visitedTiles.map(row => row.map(cell => ({...cell})));
+finalVisited[batY][batX].visited = true;  // Ensure bat room stays visible
+finalVisited[randomPos.y][randomPos.x].visited = true;  // Make new landing room visible
+setVisitedTiles(finalVisited);
+          
+          setCharacterPos(randomPos);
+          setEntryDirection(null);
+          setBatAnimation(null);
+          setAnimatingBatRoom(null);
+          setCheckedBatRoom(false);
+          setIsBeingCarried(false);
+        }, 500);
+      }
+    }
+    setCharacterPos(newPos);
+    setEntryDirection(oppositeDirection[direction]);
+  } else if (newTileType === TILE_TYPES.PIT) {
+    setGameState('pit');
+    setFlashCount(1);
+  } else if (newTileType === TILE_TYPES.POINGLY) {
+    setGameState('poingly');
+  } else {
+    setCharacterPos(newPos);
+    setEntryDirection(oppositeDirection[direction]);
+    setCheckedBatRoom(false);
+  }
+};
+          
+  // useEffect with keyboard handler
+useEffect(() => {
+  const handleKeyPress = (e) => {
+    if (e.code === 'Space' || Object.keys(keyToDirection).includes(e.key)) {
+      e.preventDefault();
+    }
+
+    if (e.code === 'Space') {
+      setIsArrowMode(prev => !prev);
+      return;
+    }
+
+    const direction = keyToDirection[e.key];
+    if (!direction) return;
+
+    if (isArrowMode) {
+      const hitLocation = traceArrowPath(characterPos.x, characterPos.y, direction);
+      if (tileMap.tileMap[hitLocation.y][hitLocation.x] === TILE_TYPES.POINGLY) {
+        setGameState('win');
+      } else {
+        setGameState('poingly');
+      }
+      return;
+    }
+
+    const currentTileType = tileMap.tileMap[characterPos.y][characterPos.x];
+    const validMoves = getValidMoves(characterPos, currentTileType, entryDirection);
+
+    if (!validMoves.includes(direction)) return;
+
+    let newPos = { ...characterPos };
+    switch(e.key) {
+      case 'ArrowUp':
+        newPos.y = (newPos.y - 1 + GRID_HEIGHT) % GRID_HEIGHT;
+        break;
+      case 'ArrowDown':
+        newPos.y = (newPos.y + 1) % GRID_HEIGHT;
+        break;
+      case 'ArrowLeft':
+        newPos.x = (newPos.x - 1 + GRID_WIDTH) % GRID_WIDTH;
+        break;
+      case 'ArrowRight':
+        newPos.x = (newPos.x + 1) % GRID_WIDTH;
+        break;
+      default:
+        return;
+    }
+
+    handleMovement(direction, newPos);
+  };
+
+  window.addEventListener('keydown', handleKeyPress);
+  return () => window.removeEventListener('keydown', handleKeyPress);
+}, [characterPos, entryDirection, tileMap, isArrowMode, checkedBatRoom]);
+          
+        // Game state renders
+        if (gameState === 'win') {
+          return (
+            <div className="fixed inset-0 bg-black">
+              <div className="text-center py-20">
+                <h1 className="text-6xl font-bold text-white mb-12">
+                  YOU WIN!
+                </h1>
+                <div className="space-x-4">
+                  <button 
+                    onClick={() => window.location.reload()}
+                    className="bg-white text-black px-8 py-4 rounded-lg text-2xl hover:bg-gray-200"
+                  >
+                    PLAY AGAIN?
+                  </button>
+                  <button 
+                    onClick={() => window.open('https://open.spotify.com/artist/6z3lCFWZUtSMCtT3oFOzL2', '_blank')}
+                    className="bg-white text-black px-8 py-4 rounded-lg text-2xl hover:bg-gray-200"
+                  >
+                    LISTEN TO POINGLY
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // Add game over screens before the main game render
+  if (gameState === 'pit') {
+    return (
+      <div className={`fixed inset-0 bg-green-500 ${flashCount < 3 ? 'animate-flash' : ''}`}>
+        <style>
+          {`
+            @keyframes flash {
+              0%, 25%, 75% { background-color: black; }
+              50%, 100% { background-color: rgb(34, 197, 94); }
+            }
+            .animate-flash {
+              animation: flash 0.5s ease-in-out;
+              animation-iteration-count: 2;
+              animation-fill-mode: forwards;
+            }
+          `}
+        </style>
+        <div className="text-center py-20">
+          <h1 className="text-6xl font-bold text-black mb-12">
+            YOU FELL IN A SLIME PIT!
+          </h1>
+          <div className="space-x-4">
+            <button 
+              onClick={() => window.location.reload()}
+              className="bg-black text-white px-8 py-4 rounded-lg text-2xl hover:bg-gray-800"
+            >
+              PLAY AGAIN?
+            </button>
+            <button 
+              onClick={() => window.open('https://open.spotify.com/artist/6z3lCFWZUtSMCtT3oFOzL2', '_blank')}
+              className="bg-black text-white px-8 py-4 rounded-lg text-2xl hover:bg-gray-800"
+            >
+              LISTEN TO POINGLY
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'poingly') {
+    return (
+      <div className="fixed inset-0 bg-red-600">
+        <div className="relative">
+          {/* Beady eyes */}
+          <div className="absolute top-1/8 left-1/2 transform -translate-x-1/2">
+            <div className="flex space-x-20">
+              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center">
+                <div className="w-8 h-8 bg-black rounded-full"></div>
+              </div>
+              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center">
+                <div className="w-8 h-8 bg-black rounded-full"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="text-center py-20 mt-32">
+            <h1 className="text-6xl font-bold text-black mb-12">
+              YOU GOT EATEN BY THE WUMPUS!
+            </h1>
+            <div className="space-x-4">
+              <button 
+                onClick={() => window.location.reload()}
+                className="bg-black text-white px-8 py-4 rounded-lg text-2xl hover:bg-gray-800"
+              >
+                PLAY AGAIN?
+              </button>
+              <button 
+                onClick={() => window.open('https://open.spotify.com/artist/6z3lCFWZUtSMCtT3oFOzL2', '_blank')}
+                className="bg-black text-white px-8 py-4 rounded-lg text-2xl hover:bg-gray-800"
+              >
+                LISTEN TO POINGLY
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+return (
+    <div className="p-4 max-w-4xl mx-auto bg-black">
+      
+      <svg viewBox={`0 0 ${GRID_WIDTH * TILE_SIZE} ${GRID_HEIGHT * TILE_SIZE}`}>
+        {/* First render fog tiles everywhere */}
+        {tileMap.tileMap.map((row, y) =>
+          row.map((_, x) => (
+            !visitedTiles[y][x] && <FogTile key={`fog-${x}-${y}`} x={x} y={y} />
+          ))
+        )}
+        
+        {/* Then render visited game tiles */}
+{tileMap.tileMap.map((row, y) =>
+  row.map((tileType, x) => {
+    const key = `${x},${y}`;
+    // Remove the visibility check here since curves have their own visibility states
+    return (
+      <g key={key}>
+        {tileType === TILE_TYPES.CIRCLE && visitedTiles[y][x].visited && <Circle x={x} y={y} />}
+        {tileType === TILE_TYPES.CURVE_1 && 
+          <PartialCurvePattern1 
+            x={x} 
+            y={y} 
+            showTopRight={visitedTiles[y][x].topRight}
+            showBottomLeft={visitedTiles[y][x].bottomLeft}
+          />
+        }
+        {tileType === TILE_TYPES.CURVE_2 && 
+          <PartialCurvePattern2 
+            x={x} 
+            y={y} 
+            showTopLeft={visitedTiles[y][x].topLeft}
+            showBottomRight={visitedTiles[y][x].bottomRight}
+          />
+        }
+        {tileType === TILE_TYPES.PIT && visitedTiles[y][x].visited && <PitRoom x={x} y={y} />}
+        {tileMap.warningRooms.pitWarnings.has(key) && visitedTiles[y][x].visited && <BreezeWarning x={x} y={y} />}
+        {(tileMap.warningRooms.wumpusWarnings.has(key) ||
+          tileMap.warningRooms.wumpusSecondaryWarnings.has(key)) &&
+          visitedTiles[y][x].visited && <WumpusWarning x={x} y={y} />}
+        {tileType === TILE_TYPES.POINGLY && visitedTiles[y][x].visited && <PoinglyRoom x={x} y={y} />}
+        {tileType === TILE_TYPES.BAT && visitedTiles[y][x].visited && 
+          <BatRoom 
+            x={x} 
+            y={y} 
+            isAnimating={animatingBatRoom && animatingBatRoom.x === x && animatingBatRoom.y === y}
+          />
+        }
+      </g>
+    );
+  })
+)}
+        <Character 
+  x={characterPos.x} 
+  y={characterPos.y} 
+  tileType={tileMap.tileMap[characterPos.y][characterPos.x]}
+  entryDirection={entryDirection}
+  batAnimation={batAnimation}
+  isArrowMode={isArrowMode}
+/>
+      </svg>
+    </div>
+  );
+};
+
+// Create root and render
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<GameBoard />);
+    </script>
+  </body>
+</html>
