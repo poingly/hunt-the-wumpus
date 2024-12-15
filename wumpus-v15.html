@@ -1423,11 +1423,16 @@ const handleTouchEnd = (e) => {
     );
   }
 return (
-    <div className="fixed inset-0 p-4 bg-black touch-none flex items-center justify-center overflow-hidden">
-      <div className="w-full max-w-[900px]">
+    <div className="fixed inset-0 bg-black touch-none">
+      <div className="w-full h-full p-4 flex items-center justify-center">
         <svg 
           viewBox={`0 0 ${GRID_WIDTH * TILE_SIZE} ${GRID_HEIGHT * TILE_SIZE}`}
-          className="w-full h-auto"
+          style={{
+            width: '100%',
+            maxWidth: '900px',
+            height: '100%',
+            maxHeight: '90vh'
+          }}
           preserveAspectRatio="xMidYMid meet"
         >
           {/* First render fog tiles everywhere */}
@@ -1487,6 +1492,7 @@ return (
             isArrowMode={isArrowMode}
           />
         </svg>
+        
       </div>
     </div>
 );
